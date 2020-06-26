@@ -1,0 +1,95 @@
+---
+title: "Simple Exponential Smoothing-USgas"
+author: "Neelotpal Das"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE)
+```
+
+Here we shall try to **forecast** the US -Nationwide total gas consumption [(source)](https://fred.stlouisfed.org/series/NATURALGAS) using **Simple Exponential Smoothing**based on a 20-year period of monthly data.
+The Simple exponential smoothing (SES) as its name implies, is the simplest forecasting model among the exponential smoothing family. The main assumption of this model is that the series stays at the same level (that is, the local mean of the series is constant) over time, and therefore, this model is suitable for series with neither trend nor seasonal components.As Usual , we will start with EDA , move to Analysis and end with forecast.
+  
+##Exploratory Data Analysis.
+```{r}
+#Load necessary packages and data
+library(forecast)
+library(ggplot2)
+library(fpp2)
+d <- read.csv("NATURALGAS.csv")
+t0 <- ts(d[,2],start=c(2000,1),frequency = 12)
+(head(d))
+autoplot(t0)+ylab("Consumption in billion cubic feet")
+```
+
+Cyclical Fluctuations are clearly visible.Maybe there is seasonality present . Let's check!
+
+##Seasonality
+
+```{r}
+ggseasonplot(t0)
+```
+We can clearly see that consumption of gas is significantly higher in the months from November to March.However,if we want to be super sure about it , we many us `subseriesplot` a.k.a anova of seasons.
+```{r}
+ggsubseriesplot(t0)
+```
+
+##ACF & PACF
+
+A very important part of time series analysis begins with finding **ACF**(autocorrelation) and **PACF**.The ACF tells us how much this weeks consumption is related with consumption of previous month(@ time=t-1) or another month (@ time = t - s) , where "s" is the lag.The **PACF** on the other hand the correlation of this month's consumption with consumption (@ time = t -s ) keeping other correlations in between constant.
+
+```{r ACF}
+ggAcf(t0)
+pacf(t0)
+```
+We could clearly see the acf spikes around lag 12 and a similar at lag 23/24. So high correlation is present at lag =12.
+However, if we want to double check that the time series we have is not a white noise we can do it using `Box.test`
+```{r}
+Box.test(t0, lag = 24, fitdf = 0, type = "Lj")
+```
+**Result**: the time series is definitely not a white noise process.
+
+##Forecasting
+```{r}
+# create training and validation of the US Natural gas data
+t0.train <- window(t0,end=c(2016,12))
+t0.test <- window(t0,start=c(2017,1))
+```
+The key point to remember is that SES is suitable for data with no trend or seasonal pattern. 
+We manually set the ??=.2 for our initial model and forecast forward 100 steps with h=40.
+```{r}
+t0.train.ses <- ses(t0.train,alpha = 0.2,h=40)
+autoplot(t0.train.ses)
+t0.train.diff <- diff(t0.train)
+autoplot(t0.train.diff) #de-trended data
+t0.train.diff.ses <- ses(t0.train.diff,alpha = 0.1,h=40)
+autoplot(t0.train.diff.ses)
+#testing accuracy
+t0.test.diff <- diff(t0.test)
+accuracy(t0.train.diff.ses,t0.test.diff)
+```
+
+We can tune our *alpha* parameter to identify the value that reduces our forecasting error.Here we loop through alpha values from 0.01-0.99 and identify the level that minimizes our test RMSE.
+```{r}
+alpha <- seq(.01, .99, by = .01)
+RMSE <- c()
+for(i in seq_along(alpha)){
+  t1 <- ses(t0.train.diff,alpha = alpha[i],h=40)
+  RMSE[i] <- accuracy(t1,t0.test.diff)[2,2]
+}
+# convert to a data frame and idenitify min alpha value
+alpha.fit <- data.frame(alpha,RMSE)
+# plot RMSE vs. alpha
+ggplot(alpha.fit, aes(alpha, RMSE)) +geom_line()
+```
+
+We see the minimum RMSE is obtained at alpha=0.01
+
+###Final Model:-
+```{r}
+t1 <- t0.train.diff.ses <- ses(t0.train.diff,alpha = 0.01,h=40)
+autoplot(t1)
+```
+
+We can clearly see that the forecast is inadequate to say the least ,but it does provide some useful **prediction interval**.Since the goal of the SES model is to forecast the level of the series, the model won't capture any short-term oscillation.We will see next how ARIMA or otther advanced machine learning methods could be applied to provide better forecasts.
